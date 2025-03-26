@@ -103,7 +103,7 @@ pull_images() {
 
   for image in "${other_images[@]}"; do
     echo -e "${YELLOW}正在拉取: ${image}${NC}"
-    if ! ctr images pull "${image}"; then
+    if ! ctr -n k8s.io images pull "${image}"; then
       echo -e "${RED}镜像拉取失败: ${image}${NC}"
       exit 1
     fi
