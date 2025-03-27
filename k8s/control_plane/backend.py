@@ -1,4 +1,3 @@
-# server.py
 from flask import Flask, request, jsonify
 import mysql.connector
 from mysql.connector import errorcode
@@ -7,6 +6,9 @@ import json
 from werkzeug.security import generate_password_hash, check_password_hash
 import time
 import re
+import os
+import requests
+from pathlib import Path
 
 class Config:
     ListenAddr = "0.0.0.0:12000"
@@ -81,19 +83,19 @@ def k8s_join():
         cursor = conn.cursor(dictionary=True)
         # 验证用户凭证
         cursor.execute("""
-            SELECT password 
-            FROM users 
+            SELECT password
+            FROM users
             WHERE username = %s
         """, (data['username'],))
         user = cursor.fetchone()
-        
+
         if not user:
             return jsonify({"error": "User not found"}), 401
         if not check_password_hash(generate_password_hash(user['password']), data['user_password']):
             return jsonify({"error": "Invalid password"}), 401
-        
+
         return jsonify({"status": "200 OK"}), 200
-        
+
     except mysql.connector.Error as err:
         app.logger.error(f"Database error: {err}")
         return jsonify({"error": "Database error"}), 500
@@ -107,7 +109,7 @@ def join_complete():
     data = request.json
     if not data or 'username' not in data or 'hardware_info' not in data:
         return jsonify({"error": "Invalid request"}), 400
-    
+
     conn = None
     try:
         conn = get_db_connection()
@@ -134,8 +136,10 @@ def join_complete():
             data['hardware_info'].get('gpu_type'),
         ))
         conn.commit()
+        update_service_discovery(data['hardware_info'].get('ip'), 'node_exporters')
+        update_service_discovery(data['hardware_info'].get('ip'), 'dcgm')
         return jsonify({"status": "Node registered"}), 200
-        
+
     except mysql.connector.Error as err:
         app.logger.error(f"Database error: {err}")
         return jsonify({"error": "Failed to save node info"}), 500
@@ -148,11 +152,11 @@ def join_complete():
 def k8s_delete():
     data = request.json
     required_fields = ['node_name', 'username', 'user_password']
-    
+
     # 参数校验
     if not all(field in data for field in required_fields):
         return jsonify({"error": "缺少必要参数: node_name, username, user_password"}), 400
-    
+
     node_name = data['node_name']
     # k8s requires all letters to be lower
     node_name_lower = node_name.lower()
@@ -164,20 +168,20 @@ def k8s_delete():
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
-        
+
         # 查询用户信息
         cursor.execute("""
-            SELECT password 
-            FROM users 
+            SELECT password
+            FROM users
             WHERE username = %s
         """, (username,))
         user = cursor.fetchone()
-        
+
         if not user:
             return jsonify({"error": "用户不存在"}), 401
         if not check_password_hash(generate_password_hash(user['password']), data['user_password']):
             return jsonify({"error": "密码错误"}), 401
-            
+
     except mysql.connector.Error as err:
         app.logger.error(f"数据库错误: {err}")
         return jsonify({"error": "数据库错误"}), 500
@@ -214,11 +218,11 @@ def k8s_delete():
 
             # 执行删除操作
             db_cursor.execute("""
-                DELETE FROM node 
+                DELETE FROM node
                 WHERE name = %s
             """, (node_name,))
             deleted_rows = db_cursor.rowcount
-            
+
             db_conn.commit()
 
             # 处理删除结果
@@ -266,7 +270,7 @@ def k8s_delete():
             "error": "节点删除失败",
             "details": error_msg
         }), 500
-        
+
     except Exception as e:
         app.logger.error(f"系统错误: {str(e)}")
         return jsonify({
@@ -274,9 +278,59 @@ def k8s_delete():
             "details": str(e)
         }), 500
 
+def update_service_discovery(new_ip: str, type:str, prometheus_url: str = "http://localhost:9999"):
+
+    if type == 'node_exporters':
+        json_path = '~/prometheus/prometheus-3.2.1.linux-amd64/node_exporters.json'
+    if type == 'dcgm':
+        json_path = '~/prometheus/prometheus-3.2.1.linux-amd64/dcgm.json'
+    json_file = Path(json_path).absolute()
+    json_file.parent.mkdir(parents=True, exist_ok=True)
+    
+    # 初始化默认数据结构
+    data = [{"targets": []}]
+    
+    try:
+        # 读取现有文件内容
+        if json_file.exists():
+            with open(json_file, 'r') as f:
+                data = json.load(f)
+                if not isinstance(data, list) or not all(isinstance(item, dict) for item in data):
+                    raise ValueError("Invalid JSON structure")
+    except (json.JSONDecodeError, ValueError) as e:
+        print(f"配置文件 {json_path} 格式错误，将创建新文件。错误详情: {str(e)}")
+        data = [{"targets": []}]
+
+    # 构造完整目标地址
+    if type == 'node_exporters':
+        new_target = f"{new_ip.strip()}:9100"
+    if type == 'dcgm':
+        new_target = f"{new_ip.strip()}:9400"
+    
+    # 检查是否已存在重复项
+    existing_targets = set()
+    for group in data:
+        if "targets" in group and isinstance(group["targets"], list):
+            existing_targets.update(group["targets"])
+    
+    if new_target in existing_targets:
+        print(f"目标 {new_target} 已存在，无需重复添加")
+        return
+
+    # 添加新目标到第一个目标组（兼容多组结构）
+    if data and "targets" in data[0]:
+        data[0]["targets"].append(new_target)
+    else:
+        data = [{"targets": [new_target]}]
+
+    # 写入更新后的文件
+    with open(json_file, 'w') as f:
+        json.dump(data, f, indent=2)
+    print(f"成功添加目标 {new_target} 到 {json_file}")
+
 if __name__ == '__main__':
     app.run(
-        host=Config.ListenAddr.split(':')[0], 
+        host=Config.ListenAddr.split(':')[0],
         port=int(Config.ListenAddr.split(':')[1]),
         ssl_context='adhoc'
     )
