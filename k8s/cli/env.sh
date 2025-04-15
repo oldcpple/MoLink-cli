@@ -43,6 +43,8 @@ modify_containerd_config() {
     containerd config default > /etc/containerd/config.toml
   fi
 
+  containerd config default | tee /etc/containerd/config.toml
+
   # 修改sandbox_image和SystemdCgroup
   sed -i \
     -e 's|sandbox_image =.*|sandbox_image = "registry.aliyuncs.com/google_containers/pause:3.9"|g' \
@@ -81,9 +83,10 @@ pull_images() {
   # 下载镜像文件
   download_from_ftp "cni.tar"
   download_from_ftp "node.tar"
+  download_from_ftp "molink-release-0.8.tar"
 
   # 导入本地镜像
-  for image in cni.tar node.tar; do
+  for image in cni.tar node.tar molink-release-0.8.tar; do
     echo -e "${YELLOW}正在导入: ${image}${NC}"
     if ! ctr -n k8s.io images import "${image}"; then
       echo -e "${RED}镜像导入失败: ${image}${NC}"
@@ -114,11 +117,14 @@ pull_images() {
 install_nvidia_plugin() {
   echo -e "${YELLOW}[4/5] 安装NVIDIA设备插件...${NC}"
   
-  # 添加NVIDIA仓库源
-  curl -s -L https://mirrors.ustc.edu.cn/libnvidia-container/stable/deb/nvidia-container-toolkit.list
-  sed -i 's#nvidia.github.io#mirrors.ustc.edu.cn#g' /etc/apt/sources.list.d/nvidia-container-toolkit.list
-  apt update --allow-unauthenticated
-  apt install -y nvidia-container-toolkit
+  curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
+  && curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+  tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+  sed -i -e '/experimental/ s/^#//g' /etc/apt/sources.list.d/nvidia-container-toolkit.list
+  apt-get update
+  apt-get install -y nvidia-container-toolkit
 
   # 配置containerd
   nvidia-ctk runtime configure --runtime=containerd --set-as-default
