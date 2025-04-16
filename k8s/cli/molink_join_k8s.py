@@ -154,6 +154,19 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     if not join_cluster(args):
+        hardware_info = get_system_info()
+        failure_url = f"https://{args.control_plane}:12000/k8s_fail"
+        failure_data = {
+            "username": args.username,
+            "hardware_info": hardware_info
+        }
+        failure_resp = requests.post(
+            failure_url, 
+            json=failure_data, 
+            verify=False,
+            timeout=10
+        )
+
         print("\n节点加入流程失败，请检查：")
         print("1. 网络连接是否正常")
         print("2. 令牌和哈希值是否有效")
