@@ -83,7 +83,7 @@ pull_images() {
   # 下载镜像文件
   download_from_ftp "cni.tar"
   download_from_ftp "node.tar"
-  download_from_ftp "molink-release-0.8.tar"
+  download_from_ftp "molink-release-0.9.tar"
 
   # 导入本地镜像
   for image in cni.tar node.tar molink-release-0.8.tar; do
