@@ -86,7 +86,7 @@ pull_images() {
   download_from_ftp "molink-release-0.9.tar"
 
   # 导入本地镜像
-  for image in cni.tar node.tar molink-release-0.8.tar; do
+  for image in cni.tar node.tar molink-release-0.9.tar; do
     echo -e "${YELLOW}正在导入: ${image}${NC}"
     if ! ctr -n k8s.io images import "${image}"; then
       echo -e "${RED}镜像导入失败: ${image}${NC}"
